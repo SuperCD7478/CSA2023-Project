@@ -1,0 +1,8 @@
+library(tidyverse)
+library(nflfastR)
+library(nflreadr)
+nflreadr_snaps <- load_snap_counts(2018:2020) %>% select(-week, -game_id, -pfr_game_id)
+nflreadr_snaps_season <- nflreadr_snaps  %>% group_by(pfr_player_id, season) %>%
+  mutate(off_snaps_season = sum(offense_snaps), def_snaps_season = sum(defense_snaps)) %>% ungroup() %>% select(-offense_snaps, -defense_snaps, -offense_pct, -defense_pct, -st_snaps, -st_pct, -opponent, -game_type, -team)
+nflreadr_snaps_season <- nflreadr_snaps_season %>% distinct()
+nflreadr_snaps_season <- nflreadr_snaps_season %>% mutate(snaps = off_snaps_season + def_snaps_season)
