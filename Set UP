@@ -1,0 +1,19 @@
+library(tidyverse)
+library(nflfastR)
+library (ggrepel)
+library(nflreadr)
+library (nflplotR)
+
+install.packages("nflreadr")
+install.packages("nflplotR")
+install.packages("X11")
+
+getwd()
+
+receiving2020 <- read.csv("receiving_summary_2020.csv")
+passing2020 <- read.csv("passing_summary_2020.csv")
+blocking2020 <- read.csv("offense_blocking_2020.csv")
+defense2020 <- read.csv("defense_summary_2020.csv")
+osnaps2020 <- read.csv("offense_snaps2020.csv")
+dsnaps2020 <- read.csv("defense_snaps2020.csv")
+contracts <- read.csv("contracts2018_2020.csv")
