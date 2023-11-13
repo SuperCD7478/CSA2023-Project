@@ -1,125 +1,87 @@
-library(tidyverse)
-library (ggrepel)
-library (nflreadr)
-library (nflplotR)
-
-
-getwd()
-
-receiving2020 <- read.csv("receiving_summary2020.csv")
-passing2020 <- read.csv("passing_summary2020.csv")
-blocking2020 <- read.csv("offense_blocking2020.csv")
-defense2020 <- read.csv("defense_summary2020.csv")
-osnaps2020 <- read.csv("offense_snaps2020.csv")
-dsnaps2020 <- read.csv("defense_snaps2020.csv")
-contracts <- read.csv("contracts2018_2020.csv")
-
-
-
 filtered_contracts2020 <- contracts %>%
-  summarize(name = Player, cap = Cap.Number, year =  Year) %>%
-    filter(year == 2020)
+  summarize(name = Player, cap = Cap.Number, year =  Year, position = Pos) %>%
+  filter(year == 2020)
 
-print(filtered_contracts2020)
-
-filtered_osnaps <- osnaps2020 %>%
-  summarize(name = NAME, team = TEAM, snaps = Total)
-
-filtered_dsnaps <- dsnaps2020 %>%
-  summarize(name = NAME, team = TEAM, snaps = Total)
-
-total_snaps <- rbind(filtered_dsnaps, filtered_osnaps) %>%
-  arrange(-snaps)
-
-total_snaps
 
 filtered_receiving <- receiving2020 %>%
   summarize(name = player, id = player_id, grade = grades_offense, position = position, games = player_game_count) %>%
-    arrange(-grade) 
-      
+  arrange(-grade) 
+
 
 filtered_passing <- passing2020 %>%
   summarize(name = player, id = player_id, grade = grades_offense, position = position, games = player_game_count) %>%
-    arrange(-grade) 
-      
+  arrange(-grade) 
+
 
 filtered_defense <- defense2020 %>%
   summarize(name = player, id = player_id, grade = grades_defense, position = position, games = player_game_count) %>%
-    arrange(-grade) 
-      
+  arrange(-grade) 
+
 
 filtered_blocking <- blocking2020 %>%
   summarize(name = player, id = player_id, grade = grades_offense, position = position, games = player_game_count) %>%
-    arrange(-grade) 
-      
+  arrange(-grade) 
+
+nflreadr_snaps_seasons <- nflreadr_snaps_season %>% filter(season == 2020) %>% rename(name = player)
 
 
 
 total <- rbind(filtered_blocking, filtered_defense, filtered_passing, filtered_receiving) %>%
-  merge(total_snaps, by = "name") %>%
-    merge(filtered_contracts2020, by = "name") %>%
-      distinct(id, .keep_all = TRUE) %>%
-        arrange(-grade) %>%
-          filter(snaps > 200)
-totalbackwards <- rbind(filtered_blocking, filtered_defense, filtered_passing, filtered_receiving) %>%
-  merge(total_snaps, by = "name") %>%
-    merge(filtered_contracts2020, by = "name") %>%
-      distinct(id, .keep_all = TRUE) %>%
-        arrange(grade) %>%
-          filter(snaps > 200)
+  merge(nflreadr_snaps_seasons, join_by = c("name", "position")) %>%
+  merge(filtered_contracts2020, join_by = c("name", "position")) %>%
+  distinct(id, .keep_all = TRUE) %>%
+  arrange(-grade) %>%
+  filter(snaps > 200)
 
 
 print(total)
 
-dupes <- total %>%
-  summarize(name = name) %>%
-    duplicated()
-otherdupes <- total %>%
-  arrange(grade) %>%
-    summarize(name = name) %>%
-      duplicated()
+#dupes <- total %>%
+#  summarize(name = name) %>%
+#  duplicated()
+#otherdupes <- total %>%
+#  arrange(grade) %>%
+#  summarize(name = name) %>%
+#  duplicated()
 
-for (x in 1:length(dupes)) {
-  if (dupes[x] == TRUE){
-    print(x)
-  }
-}
-    
-for (x in 1:length(otherdupes)) {
-  if (otherdupes[x] == TRUE){
-    print(x)
-  }
-}
+#for (x in 1:length(dupes)) {
+#  if (dupes[x] == TRUE){
+#    print(x)
+#  }
+#}
 
-dupenames <- slice(total,318,915,1006,1008,1085,1122)
-otherdupenames <- slice(totalbackwards, 48, 758, 790, 818, 823)
+#for (x in 1:length(otherdupes)) {
+#  if (otherdupes[x] == TRUE){
+#    print(x)
+#  }
+#}
 
-otherdupenames
-dupenames
+#dupenames <- slice(total,318,915,1006,1008,1085,1122)
+#otherdupenames <- slice(totalbackwards, 48, 758, 790, 818, 823)
 
-newtotal <- edit(total)
-newtotal
+#otherdupenames
+#dupenames
+
+#newtotal <- edit(total)
+newtotal <- total
+
+
+
+
+
+
 
 snap_filtered <- filter(newtotal, snaps > 200)
 
-themean <- mean(snap_filtered$grade)
-thesd <- sd(snap_filtered$grade)
+with_mean <- snap_filtered %>% group_by(position) %>% mutate(mean_grade = mean(grade))
+with_sd <- with_mean %>% group_by(position) %>% mutate(sd_grade = sd(grade))
+with_zscore <- with_sd %>% mutate(zScore = (grade-mean_grade)/sd_grade)
 
-newtotal$zscore <- (newtotal$grade-themean)/thesd
+with_zscore$cap <- gsub("\\$","",as.character(with_zscore$cap)) 
+with_zscore$cap <- gsub(",","",as.character(with_zscore$cap)) 
 
-newtotal
+with_zscore$cap <- as.numeric(with_zscore$cap)
 
-
-##############################################
-data <- load_pbp(2022)
-pbp_rp <- data %>%
-  filter(pass == 1, !is.na(epa))
-
-pbp_rp %>%
-  filter(pass == 1) %>%
-  group_by(passer) %>%
-  summarize(
-    mean_epa = mean(epa), success_rate = mean(success), plays = n()
-  ) %>%
-  arrange(-mean_epa) %>%
-  filter(plays > 100)
+with_mean2 <- with_zscore %>% group_by(position) %>% mutate(mean_cap = mean(cap))
+with_sd2 <- with_mean2 %>% group_by(position) %>% mutate(sd_cap = sd(cap))
+with_zscore2 <- with_sd2 %>% mutate(zScore_cap = (cap-mean_cap)/sd_cap)
