@@ -1,0 +1,569 @@
+library(tidyverse)
+library(nflfastR)
+library (ggrepel)
+library(nflreadr)
+library (nflplotR)
+
+install.packages("nflreadr")
+install.packages("nflplotR")
+install.packages("X11")
+
+future::plan("multisession")
+stats <- load_pbp(2023) %>% calculate_player_stats(weekly = FALSE) 
+
+
+
+nflreadr_rosters <- load_rosters(2018:2020)
+nflreadr_snaps <- load_snap_counts(2018:2020) %>% select(-week, -game_id, -pfr_game_id)
+nflreadr_snaps_season <- nflreadr_snaps  %>% filter(game_type == "REG") %>% group_by(pfr_player_id, season) %>%
+  mutate(off_snaps_season = sum(offense_snaps), def_snaps_season = sum(defense_snaps)) %>% ungroup() %>% select(-offense_snaps, -defense_snaps, -offense_pct, -defense_pct, -st_snaps, -st_pct, -opponent, -game_type, -team)
+nflreadr_snaps_season <- nflreadr_snaps_season %>% distinct()
+nflreadr_snaps_season <- nflreadr_snaps_season %>% mutate(snaps = off_snaps_season + def_snaps_season)
+
+
+######Player Data
+
+getwd()
+
+receiving2020 <- read.csv("receiving_summary_2020.csv")
+passing2020 <- read.csv("passing_summary_2020.csv")
+blocking2020 <- read.csv("offense_blocking_2020.csv")
+defense2020 <- read.csv("defense_summary_2020.csv")
+osnaps2020 <- read.csv("offense_snaps2020.csv")
+dsnaps2020 <- read.csv("defense_snaps2020.csv")
+contracts <- read.csv("contracts2018_2020.csv")
+
+
+
+filtered_contracts2020 <- contracts %>%
+  summarize(name = Player, cap = Cap.Number, year =  Year, position = Pos) %>%
+  filter(year == 2020)
+
+print(filtered_contracts2020)
+
+#filtered_osnaps <- osnaps2020 %>%
+#  summarize(name = NAME, team = TEAM, snaps = Total)
+
+#filtered_dsnaps <- dsnaps2020 %>%
+#  summarize(name = NAME, team = TEAM, snaps = Total)
+
+#total_snaps <- rbind(filtered_dsnaps, filtered_osnaps) %>%
+#  arrange(-snaps)
+
+#total_snaps
+
+filtered_receiving_2020 <- receiving2020 %>%
+  summarize(name = player, id = player_id, grade = grades_offense, position = position, games = player_game_count) %>%
+  arrange(-grade) 
+
+
+filtered_passing_2020 <- passing2020 %>%
+  summarize(name = player, id = player_id, grade = grades_offense, position = position, games = player_game_count) %>%
+  arrange(-grade) 
+
+
+filtered_defense_2020 <- defense2020 %>%
+  summarize(name = player, id = player_id, grade = grades_defense, position = position, games = player_game_count) %>%
+  arrange(-grade) 
+
+
+filtered_blocking_2020 <- blocking2020 %>%
+  summarize(name = player, id = player_id, grade = grades_offense, position = position, games = player_game_count) %>%
+  arrange(-grade) 
+
+nflreadr_snaps_seasons_2020 <- nflreadr_snaps_season %>% filter(season == 2020) %>% rename(name = player)
+
+
+
+total_2020 <- rbind(filtered_blocking_2020, filtered_defense_2020, filtered_passing_2020, filtered_receiving_2020) %>%
+  merge(nflreadr_snaps_seasons_2020, join_by = c("name", "position")) %>%
+  merge(filtered_contracts2020, join_by = c("name", "position")) %>%
+  distinct(id, .keep_all = TRUE) %>% 
+  arrange(-grade) %>%
+  filter(snaps > 200)
+
+
+print(total_2020)
+
+#dupes <- total %>%
+#  summarize(name = name) %>%
+#  duplicated()
+#otherdupes <- total %>%
+#  arrange(grade) %>%
+#  summarize(name = name) %>%
+#  duplicated()
+
+#for (x in 1:length(dupes)) {
+#  if (dupes[x] == TRUE){
+#    print(x)
+#  }
+#}
+
+#for (x in 1:length(otherdupes)) {
+#  if (otherdupes[x] == TRUE){
+#    print(x)
+#  }
+#}
+
+#dupenames <- slice(total,318,915,1006,1008,1085,1122)
+#otherdupenames <- slice(totalbackwards, 48, 758, 790, 818, 823)
+
+#otherdupenames
+#dupenames
+
+#newtotal <- edit(total)
+newtotal <- total
+
+
+
+
+
+
+
+snap_filtered_2020 <- filter(total_2020, snaps > 200)
+
+with_mean_2020 <- snap_filtered_2020 %>% group_by(position) %>% mutate(mean_grade = mean(grade))
+with_sd_2020 <- with_mean_2020 %>% group_by(position) %>% mutate(sd_grade = sd(grade))
+with_zscore_2020 <- with_sd_2020 %>% mutate(zScore_grade = (grade-mean_grade)/sd_grade)
+
+with_zscore_2020$cap <- gsub("\\$","",as.character(with_zscore_2020$cap)) 
+with_zscore_2020$cap <- gsub(",","",as.character(with_zscore_2020$cap)) 
+
+with_zscore_2020$cap <- as.numeric(with_zscore_2020$cap)
+
+with_mean2_2020 <- with_zscore_2020 %>% group_by(position) %>% mutate(mean_cap = mean(cap))
+with_sd2_2020 <- with_mean2_2020 %>% group_by(position) %>% mutate(sd_cap = sd(cap))
+with_zscore2_2020 <- with_sd2_2020 %>% mutate(zScore_cap = (cap-mean_cap)/sd_cap)
+
+
+zScoreCombined_2020 <- with_zscore2_2020 %>% mutate(total_zscore = zScore_cap + zScore_grade)
+
+
+
+
+##get the player rosters from 2020
+nflreadr_rosters_2020 <- load_rosters(2020)
+pff_id_team <- nflreadr_rosters_2020 %>% select(team, pff_id)
+
+#Combine them with the zScoreCombined data
+total_data_total_2020 <- zScoreCombined_2020 %>% mutate("pff_id" = id)
+total_data_total_2020 <- total_data_total_2020 %>% merge(pff_id_team, by = "pff_id", incomparables = NULL)
+
+
+#Average Zscore as positions:
+avg_team_zscore_2020 <- total_data_total_2020 %>% group_by(team, position) %>% mutate(team_pos = mean(total_zscore))
+
+
+
+
+
+
+
+
+
+
+
+################################################################## ROLL WITH 2019
+#DO FOR 2019 WITH 2020 ROSTERS
+
+
+receiving2019 <- read.csv("receiving_summary_2019.csv")
+passing2019 <- read.csv("passing_summary_2019.csv")
+blocking2019 <- read.csv("offense_blocking_2019.csv")
+defense2019 <- read.csv("defense_summary_2019.csv")
+contracts <- read.csv("contracts2018_2020.csv")
+
+
+
+filtered_contracts2019 <- contracts %>%
+  summarize(name = Player, cap = Cap.Number, year =  Year, position = Pos) %>%
+  filter(year == 2019)
+
+print(filtered_contracts2019)
+
+#filtered_osnaps <- osnaps2019 %>%
+#  summarize(name = NAME, team = TEAM, snaps = Total)
+
+#filtered_dsnaps <- dsnaps2019 %>%
+#  summarize(name = NAME, team = TEAM, snaps = Total)
+
+#total_snaps <- rbind(filtered_dsnaps, filtered_osnaps) %>%
+#  arrange(-snaps)
+
+#total_snaps
+
+############################ FIX STARTTING HERE ############################
+
+filtered_receiving_2019 <- receiving2019 %>%
+  summarize(name = player, id = player_id, grade = grades_offense, position = position, games = player_game_count) %>%
+  arrange(-grade) %>% filter(position == "WR") 
+
+
+filtered_passing_2019 <- passing2019 %>%
+  summarize(name = player, id = player_id, grade = grades_offense, position = position, games = player_game_count) %>%
+  arrange(-grade) %>% filter(position == "QB")
+
+
+filtered_defense_2019 <- defense2019 %>%
+  summarize(name = player, id = player_id, grade = grades_defense, position = position, games = player_game_count) %>%
+  arrange(-grade) %>% filter(position == "DI" | position =="ED" | position =="LB" | position =="CB" | position =="S")
+
+
+filtered_blocking_2019 <- blocking2019 %>%
+  summarize(name = player, id = player_id, grade = grades_offense, position = position, games = player_game_count) %>%
+  arrange(-grade)  %>% filter(position =="HB" | position =="T" | position =="G" | position =="FB" | position =="TE" | position =="C")
+
+nflreadr_snaps_seasons_2019 <- nflreadr_snaps_season %>% filter(season == 2019) %>% rename(name = player)
+
+
+
+
+nflreadr_rosters_2019 <- load_rosters(2019) %>% summarize(name = full_name, pff_id, pfr_id)
+
+filtered_contracts2019 <- filtered_contracts2019 %>% select(-position)
+nflreadr_snaps_seasons_2019 <- nflreadr_snaps_seasons_2019 %>% select(-position)
+
+###FIX THIS TO GET OL AND DL
+total_2019 <- rbind(filtered_blocking_2019, filtered_defense_2019, filtered_passing_2019, filtered_receiving_2019) %>%
+  merge(nflreadr_rosters_2019, join_by = c("name")) 
+total_2019 <- total_2019 %>%
+  merge(filtered_contracts2019, join_by = c("name")) %>%
+  merge(nflreadr_snaps_seasons_2019, join_by = "name") %>%
+  arrange(-grade) %>% 
+  filter(snaps > 100) %>% unique()
+
+print(total_2019)
+
+#dupes <- total %>%
+#  summarize(name = name) %>%
+#  duplicated()
+#otherdupes <- total %>%
+#  arrange(grade) %>%
+#  summarize(name = name) %>%
+#  duplicated()
+
+#for (x in 1:length(dupes)) {
+#  if (dupes[x] == TRUE){
+#    print(x)
+#  }
+#}
+
+#for (x in 1:length(otherdupes)) {
+#  if (otherdupes[x] == TRUE){
+#    print(x)
+#  }
+#}
+
+#dupenames <- slice(total,318,915,1006,1008,1085,1122)
+#otherdupenames <- slice(totalbackwards, 48, 758, 790, 818, 823)
+
+#otherdupenames
+#dupenames
+
+#newtotal <- edit(total)
+#newtotal <- total
+
+
+
+
+
+
+
+snap_filtered_2019 <- total_2019
+
+with_mean_2019 <- snap_filtered_2019 %>% group_by(position) %>% mutate(mean_grade = mean(grade))
+with_sd_2019 <- with_mean_2019 %>% group_by(position) %>% mutate(sd_grade = sd(grade))
+with_zscore_2019 <- with_sd_2019 %>% mutate(zScore_grade = (grade-mean_grade)/sd_grade)
+
+with_zscore_2019$cap <- gsub("\\$","",as.character(with_zscore_2019$cap)) 
+with_zscore_2019$cap <- gsub(",","",as.character(with_zscore_2019$cap)) 
+
+with_zscore_2019$cap <- as.numeric(with_zscore_2019$cap)
+
+with_mean2_2019 <- with_zscore_2019 %>% group_by(position) %>% mutate(mean_cap = mean(cap))
+with_sd2_2019 <- with_mean2_2019 %>% group_by(position) %>% mutate(sd_cap = sd(cap))
+with_zscore2_2019 <- with_sd2_2019 %>% mutate(zScore_cap = (cap-mean_cap)/sd_cap)
+
+
+zScoreCombined_2019 <- with_zscore2_2019 %>% mutate(total_zscore = zScore_cap + zScore_grade)
+
+
+
+
+##get the player rosters from 2019
+nflreadr_rosters_2020 <- load_rosters(2020)
+pff_id_team_2020 <- nflreadr_rosters_2020 %>% summarize(team, name = full_name)
+
+#Combine them with the zScoreCombined data
+total_data_total_2019 <- zScoreCombined_2019 %>% mutate("pff_id" = id)
+total_data_total_2019 <- total_data_total_2019 %>% merge(pff_id_team_2020, by = "name", incomparables = NULL)
+
+
+#Average Zscore as positions:
+avg_team_zscore_2019 <- total_data_total_2019 %>% group_by(team, position) %>% mutate(team_pos = mean(total_zscore))
+
+
+
+
+
+#####################################################################
+#Rookie Mesh
+
+#2023
+passing_2020_rookies_2023 <- read.csv("passing_2020_rookies_2023.csv")
+defense_2020_rookies_2023 <- read.csv("defense_2020_rookies_2023.csv")
+offense_2020_rookies_2023 <- read.csv("offense_2020_rookies_2023.csv")
+passing_2020_rookies_2023 <- passing_2020_rookies_2023 %>%
+  summarize(name = player, id = player_id, grade = grades_offense, position = position, games = player_game_count, team = team_name) %>%
+  arrange(-grade) %>% filter(position == "QB")
+offense_2020_rookies_2023 <- offense_2020_rookies_2023  %>%
+  summarize(name = player, id = player_id, grade = grades_offense, position = position, games = player_game_count, team = team_name) %>%
+  arrange(-grade) %>% filter(position == "WR" | position =="HB" | position =="T" | position =="G" | position =="FB" | position =="TE" | position =="C")
+defense_2020_rookies_2023 <- defense_2020_rookies_2023 %>%
+  summarize(name = player, id = player_id, grade = grades_defense, position = position, games = player_game_count, team = team_name) %>%
+  arrange(-grade) %>% filter(position == "DI" | position =="ED" | position =="LB" | position =="CB" | position =="S")
+rookies_2020_20232 <- rbind(passing_2020_rookies_2023, defense_2020_rookies_2023, offense_2020_rookies_2023) %>% mutate("pff_id" = id) %>% distinct() %>%
+  mutate(team = case_when(
+    team == "ARZ" ~ "ARI",
+    team == "CLV" ~ "CLE",
+    team == "BLT" ~ "BAL",
+    team == "HST" ~ "HOU",
+    TRUE ~ team
+  ))
+nflreadr_rosters_2023_rookies <- load_rosters(2023) %>% filter(rookie_year == 2020) %>% summarize(name = full_name, draft_number, team) %>%
+  mutate(name = case_when(
+    name == "C.J. Henderson" ~ "CJ Henderson",
+    name == "Jedrick Wills" ~ "Jedrick Wills Jr.",
+    name == "Henry Ruggs" ~ "Henry Ruggs III",
+    name == "Kenneth Murray" ~ "Kenneth Murray Jr.",
+    name == "Michael Pittman" ~ "Michael Pittman Jr.",
+    name == "Laviska Shenault" ~ "Laviska Shenault Jr.",
+    name == "Antoine Winfield" ~ "Antoine Winfield Jr.",
+    name == "Lloyd Cushenberry" ~ "Lloyd Cushenberry III",
+    name == "K.J. Hamler" ~ "KJ Hamler",
+    name == "A.J. Dillon" ~ "AJ Dillon",
+    name == "Davon Hamilton" ~ "DaVon Hamilton",
+    name == "Troy Pride" ~ "Troy Pride Jr.",
+    name == "Patrick Queen Jr." ~ "Patrick Queen",
+    TRUE ~ name
+  ))
+rookies_2020_2023 <- rookies_2020_20232 %>% merge(nflreadr_rosters_2023_rookies, by = c("name", "team"), incomparables = NULL) %>% arrange(draft_number)
+rookies_2020_2023 <- rookies_2020_2023 %>% filter(draft_number <= 100)
+
+
+#2022
+passing_2020_rookies_2022 <- read.csv("passing_2020_rookies_2022.csv")
+defense_2020_rookies_2022 <- read.csv("defense_2020_rookies_2022.csv")
+offense_2020_rookies_2022 <- read.csv("offense_2020_rookies_2022.csv")
+passing_2020_rookies_2022 <- passing_2020_rookies_2022 %>%
+  summarize(name = player, id = player_id, grade = grades_offense, position = position, games = player_game_count, team = team_name) %>%
+  arrange(-grade) %>% filter(position == "QB")
+offense_2020_rookies_2022 <- offense_2020_rookies_2022  %>%
+  summarize(name = player, id = player_id, grade = grades_offense, position = position, games = player_game_count, team = team_name) %>%
+  arrange(-grade) %>% filter(position == "WR" | position =="HB" | position =="T" | position =="G" | position =="FB" | position =="TE" | position =="C")
+defense_2020_rookies_2022 <- defense_2020_rookies_2022 %>%
+  summarize(name = player, id = player_id, grade = grades_defense, position = position, games = player_game_count, team = team_name) %>%
+  arrange(-grade) %>% filter(position == "DI" | position =="ED" | position =="LB" | position =="CB" | position =="S")
+rookies_2020_20222 <- rbind(passing_2020_rookies_2022, defense_2020_rookies_2022, offense_2020_rookies_2022) %>% mutate("pff_id" = id) %>% distinct() %>%
+  mutate(team = case_when(
+    team == "ARZ" ~ "ARI",
+    team == "CLV" ~ "CLE",
+    team == "BLT" ~ "BAL",
+    team == "HST" ~ "HOU",
+    TRUE ~ team
+  ))
+nflreadr_rosters_2022_rookies <- load_rosters(2022) %>% filter(rookie_year == 2020) %>% summarize(name = full_name, draft_number, team) %>%
+  mutate(name = case_when(
+    name == "C.J. Henderson" ~ "CJ Henderson",
+    name == "Jedrick Wills" ~ "Jedrick Wills Jr.",
+    name == "Henry Ruggs" ~ "Henry Ruggs III",
+    name == "Kenneth Murray" ~ "Kenneth Murray Jr.",
+    name == "Michael Pittman" ~ "Michael Pittman Jr.",
+    name == "Laviska Shenault" ~ "Laviska Shenault Jr.",
+    name == "Antoine Winfield" ~ "Antoine Winfield Jr.",
+    name == "Lloyd Cushenberry" ~ "Lloyd Cushenberry III",
+    name == "K.J. Hamler" ~ "KJ Hamler",
+    name == "A.J. Dillon" ~ "AJ Dillon",
+    name == "Davon Hamilton" ~ "DaVon Hamilton",
+    name == "Troy Pride" ~ "Troy Pride Jr.",
+    name == "Patrick Queen Jr." ~ "Patrick Queen",
+    TRUE ~ name
+  ))
+rookies_2020_2022 <- rookies_2020_20222 %>% merge(nflreadr_rosters_2022_rookies, by = c("name", "team"), incomparables = NULL) %>% arrange(draft_number)
+rookies_2020_2022 <- rookies_2020_2022 %>% filter(draft_number <= 100)
+
+#2021
+passing_2020_rookies_2021 <- read.csv("passing_2020_rookies_2021.csv")
+defense_2020_rookies_2021 <- read.csv("defense_2020_rookies_2021.csv")
+offense_2020_rookies_2021 <- read.csv("offense_2020_rookies_2021.csv")
+passing_2020_rookies_2021 <- passing_2020_rookies_2021 %>%
+  summarize(name = player, id = player_id, grade = grades_offense, position = position, games = player_game_count, team = team_name) %>%
+  arrange(-grade) %>% filter(position == "QB")
+offense_2020_rookies_2021 <- offense_2020_rookies_2021  %>%
+  summarize(name = player, id = player_id, grade = grades_offense, position = position, games = player_game_count, team = team_name) %>%
+  arrange(-grade) %>% filter(position == "WR" | position =="HB" | position =="T" | position =="G" | position =="FB" | position =="TE" | position =="C")
+defense_2020_rookies_2021 <- defense_2020_rookies_2021 %>%
+  summarize(name = player, id = player_id, grade = grades_defense, position = position, games = player_game_count, team = team_name) %>%
+  arrange(-grade) %>% filter(position == "DI" | position =="ED" | position =="LB" | position =="CB" | position =="S")
+rookies_2020_20212 <- rbind(passing_2020_rookies_2021, defense_2020_rookies_2021, offense_2020_rookies_2021) %>% mutate("pff_id" = id) %>% distinct() %>%
+  mutate(team = case_when(
+    team == "ARZ" ~ "ARI",
+    team == "CLV" ~ "CLE",
+    team == "BLT" ~ "BAL",
+    team == "HST" ~ "HOU",
+    TRUE ~ team
+  ))
+nflreadr_rosters_2021_rookies <- load_rosters(2021) %>% filter(rookie_year == 2020) %>% summarize(name = full_name, draft_number, team) %>%
+  mutate(name = case_when(
+    name == "C.J. Henderson" ~ "CJ Henderson",
+    name == "Jedrick Wills" ~ "Jedrick Wills Jr.",
+    name == "Henry Ruggs" ~ "Henry Ruggs III",
+    name == "Kenneth Murray" ~ "Kenneth Murray Jr.",
+    name == "Michael Pittman" ~ "Michael Pittman Jr.",
+    name == "Laviska Shenault" ~ "Laviska Shenault Jr.",
+    name == "Antoine Winfield" ~ "Antoine Winfield Jr.",
+    name == "Lloyd Cushenberry" ~ "Lloyd Cushenberry III",
+    name == "K.J. Hamler" ~ "KJ Hamler",
+    name == "A.J. Dillon" ~ "AJ Dillon",
+    name == "Davon Hamilton" ~ "DaVon Hamilton",
+    name == "Troy Pride" ~ "Troy Pride Jr.",
+    name == "Patrick Queen Jr." ~ "Patrick Queen",
+    TRUE ~ name
+  ))
+rookies_2020_2021 <- rookies_2020_20212 %>% merge(nflreadr_rosters_2021_rookies, by = c("name", "team"), incomparables = NULL) %>% arrange(draft_number)
+rookies_2020_2021 <- rookies_2020_2021 %>% filter(draft_number <= 100)
+
+#2020
+passing_2020_rookies_2020 <- read.csv("passing_2020_rookies_2020.csv")
+defense_2020_rookies_2020 <- read.csv("defense_2020_rookies_2020.csv")
+offense_2020_rookies_2020 <- read.csv("offense_2020_rookies_2020.csv")
+passing_2020_rookies_2020 <- passing_2020_rookies_2020 %>%
+  summarize(name = player, id = player_id, grade = grades_offense, position = position, games = player_game_count, team = team_name) %>%
+  arrange(-grade) %>% filter(position == "QB")
+offense_2020_rookies_2020 <- offense_2020_rookies_2020  %>%
+  summarize(name = player, id = player_id, grade = grades_offense, position = position, games = player_game_count, team = team_name) %>%
+  arrange(-grade) %>% filter(position == "WR" | position =="T" | position == "HB" | position =="G" | position =="FB" | position =="TE" | position =="C")
+defense_2020_rookies_2020 <- defense_2020_rookies_2020 %>%
+  summarize(name = player, id = player_id, grade = grades_defense, position = position, games = player_game_count, team = team_name) %>%
+  arrange(-grade) %>% filter(position == "DI" | position =="ED" | position =="LB" | position =="CB" | position =="S")
+rookies_2020_20202 <- rbind(passing_2020_rookies_2020, defense_2020_rookies_2020, offense_2020_rookies_2020) %>% mutate("pff_id" = id) %>% distinct() %>%
+  mutate(team = case_when(
+    team == "ARZ" ~ "ARI",
+    team == "CLV" ~ "CLE",
+    team == "BLT" ~ "BAL",
+    team == "HST" ~ "HOU",
+    TRUE ~ team
+  ))
+nflreadr_rosters_2020_rookies <- load_rosters(2020) %>% filter(rookie_year == 2020) %>% summarize(name = full_name, draft_number, team) %>%
+  mutate(name = case_when(
+    name == "C.J. Henderson" ~ "CJ Henderson",
+    name == "Jedrick Wills" ~ "Jedrick Wills Jr.",
+    name == "Henry Ruggs" ~ "Henry Ruggs III",
+    name == "Kenneth Murray" ~ "Kenneth Murray Jr.",
+    name == "Michael Pittman" ~ "Michael Pittman Jr.",
+    name == "Laviska Shenault" ~ "Laviska Shenault Jr.",
+    name == "Antoine Winfield" ~ "Antoine Winfield Jr.",
+    name == "Lloyd Cushenberry" ~ "Lloyd Cushenberry III",
+    name == "K.J. Hamler" ~ "KJ Hamler",
+    name == "A.J. Dillon" ~ "AJ Dillon",
+    name == "Davon Hamilton" ~ "DaVon Hamilton",
+    name == "Troy Pride" ~ "Troy Pride Jr.",
+    name == "Patrick Queen Jr." ~ "Patrick Queen",
+    TRUE ~ name
+  ))
+
+rookies_2020_2020 <- rookies_2020_20202 %>% merge(nflreadr_rosters_2020_rookies, by = c("name", "team"), incomparables = NULL) %>% arrange(draft_number)
+rookies_2020_2020 <- rookies_2020_2020 %>% filter(draft_number <= 100)
+
+
+
+rookies_2020_all_years1 <- rbind(rookies_2020_2020, rookies_2020_2021, rookies_2020_2022, rookies_2020_2023)
+rookies_2020_all_years2 <- rookies_2020_all_years1 %>% mutate(season_grade_total = grade*games) %>%
+  group_by(name) %>% mutate(num = 1) %>% mutate(seasons = sum(num)) %>% mutate(total_games = sum(games)) %>% 
+  mutate(total_grade_total = sum(season_grade_total)) %>%
+  mutate(avg_grade = total_grade_total/total_games) %>% select(-c("grade", "games", "num", "team", "season_grade_total", "id", "total_grade_total")) %>% mutate(position = 
+                                                                                                      case_when(
+                                                                                                        name == "Josh Jones" ~ "T",
+                                                                                                        name == "Anfernee Jennings" ~ "ED",
+                                                                                                        name == "Isaiah Simmons" ~ "LB",
+                                                                                                        name == "Austin Jackson" ~ "T",
+                                                                                                        name == "Robert Hunt" ~ "T",
+                                                                                                        name == "Matt Hennessy" ~ "C",
+                                                                                                        TRUE ~ position
+                                                                                                      )) %>%
+  unique()
+
+
+
+# Plot and correlation
+plot(rookies_2020_all_years$draft_number, rookies_2020_all_years$avg_grade)
+
+cor(rookies_2020_all_years$draft_number, rookies_2020_all_years$avg_grade)
+
+
+
+##Merge draft teams back
+nflreadr_rosters_2020_rookie <- nflreadr_rosters_2020_rookies %>% summarize(name, team)
+rookies_2020_all_years <- rookies_2020_all_years2 %>% merge(nflreadr_rosters_2020_rookie, by = "name") %>% arrange(draft_number)
+
+## Filter each roster and draft class
+
+
+filtered_players <- avg_team_zscore_2019 %>% group_by(team, position) %>% unique() %>% arrange(-team_pos) %>% mutate(count = n())
+
+
+show_this <- filtered_players %>% select(name, grade, position, cap, zScore_grade, zScore_cap, total_zscore, team, team_pos)
+
+#Bengals Lowest Position was QB with a z-score of -2.87264972 (Second lowest in the league)
+#Pick was a need
+#This is obvious
+#Average grade of 86.7 throughout career
+
+#Texans first pick in the draft, selected Ross Blacklock
+#This was the second round pick involved in the Hopkins trade
+#Their defensive interior had a z-score of -0.88620302
+
+#Jalen Reagor was a Luxury Pick with PHI WR z-score being 0.2453208
+#Average PFF Grade of 60.50208
+#Taken one pick before Justin Jefferson
+
+#Perhaps the biggest Luxury Pick that worked out
+#Jalen Hurts with a QB z-score 0.7827294 (this is because of Carson Wentz)
+#His Average PFF grade is 78.11273
+
+
+plot_time_1 <- filtered_players %>% summarize(position, team, team_pos)
+plot_time_2 <- rookies_2020_all_years %>% summarize(name, position, team, avg_grade)
+##combine each player at same position (purely if how position group already affects)
+#NO tell for draft pick
+plot_this2 <- plot_time_1 %>% merge(plot_time_2, join_by = c(team, position)) %>% unique
+
+colorss <- teams_colors_logos %>% summarize(team = team_abbr, team_color, team_color2)
+
+plot_this <- plot_this2 %>% merge(colorss, join_by = "team")
+
+#TRY FOR CORRELATION
+
+plot(plot_this$team_pos, plot_this$avg_grade)
+correlation <- round(cor(plot_this$team_pos, plot_this$avg_grade), 3)
+
+
+
+plot_this %>%
+  ggplot(aes(x = team_pos, y = avg_grade)) +
+  geom_point(aes(color = team_color), size = 2, alpha = 1) +
+  stat_smooth(method = "lm", fullrange = TRUE, se = FALSE, col = "black") +
+  geom_text(x=2, y=50, label = paste("r = ", correlation)) +
+  geom_text(aes(x = -2.87265, y = 86.67797,, label = "Joe Burrow"), nudge_y = -1) +
+  geom_text(aes(x = -0.0005435672, y = 41.0381, label = "Ross Blacklock"), nudge_y = -1) +
+  geom_text(aes(x = 0.2453208, y = 60.50208, label = "Jalen Reagor"), nudge_y = -1) +
+  geom_text(aes(x = 0.7827294, y = 78.11273, label = "Jalen Hurts"), nudge_y = -1) +
+  scale_color_identity(aesthetics = c("fill", "color")) +
+  theme(legend.title = element_blank()) + 
+  theme(plot.title = element_text(hjust = 0.5)) +
+  theme(legend.position = "none") +
+  labs(x = "Z-Score At Drafting Team's Position", y = "Average Career PFF Grade", title = " 2019 Cap Space-PFF Grade Z-Score Composite at Selection vs Career Outcome", caption = "Cornell Sports Analytics 2023-2024 | Data via PFF, nflfastr, OTC")
+  
+ggsave("CSASemester1.png", width = 30, height = 20, units = "cm",
+         path = "~/Downloads")
+
